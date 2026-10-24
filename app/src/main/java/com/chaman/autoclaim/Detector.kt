@@ -118,4 +118,147 @@ object Detector {
         }
         return out
     }
+
+    private fun nearMask(mask: BooleanArray, rw: Int, x: Int, y: Int): Boolean {
+        for (dy in -1..1) {
+            for (dx in -1..1) {
+                val xx = x + dx
+                val yy = y + dy
+                if (xx < 0 || xx >= rw || yy < 0) continue
+                val i = yy * rw + xx
+                if (i < mask.size && mask[i]) return true
+            }
+        }
+        return false
+    }
+
+    private fun looksLikeX(mask: BooleanArray, rw: Int, x0: Int, y0: Int, bw: Int, bh: Int): Boolean {
+        fun at(fx: Float, fy: Float) = nearMask(mask, rw, x0 + (bw * fx).toInt(), y0 + (bh * fy).toInt())
+        val diag = at(0.5f, 0.5f) && at(0.22f, 0.22f) && at(0.78f, 0.22f) && at(0.22f, 0.78f) && at(0.78f, 0.78f)
+        val empty = !at(0.5f, 0.06f) && !at(0.5f, 0.94f) && !at(0.06f, 0.5f) && !at(0.94f, 0.5f)
+        return diag && empty
+    }
+
+    /** Ad ke 4 corners me chhota "X" (close) glyph shape se dhundhta hai (bright ya dark X). */
+    fun findCornerX(bmp: Bitmap): List<Rect> {
+        val w = bmp.width
+        val h = bmp.height
+        val cw = (w * 0.22f).toInt()
+        val ch = (h * 0.14f).toInt()
+        if (cw < 20 || ch < 20) return emptyList()
+        val regions = listOf(
+            Rect(0, 0, cw, ch),
+            Rect(w - cw, 0, w, ch),
+            Rect(0, h - ch, cw, h),
+            Rect(w - cw, h - ch, w, h)
+        )
+        val out = ArrayList<Rect>()
+        for (reg in regions) {
+            val rw = reg.width()
+            val rh = reg.height()
+            val px = IntArray(rw * rh)
+            bmp.getPixels(px, 0, rw, reg.left, reg.top, rw, rh)
+            for (bright in listOf(true, false)) {
+                val mask = BooleanArray(rw * rh) { i ->
+                    val p = px[i]
+                    val l = (Color.red(p) * 299 + Color.green(p) * 587 + Color.blue(p) * 114) / 1000
+                    if (bright) l > 185 else l < 75
+                }
+                val seen = BooleanArray(rw * rh)
+                val stack = IntArray(rw * rh)
+                for (start in 0 until rw * rh) {
+                    if (!mask[start] || seen[start]) continue
+                    var sp = 0
+                    stack[sp++] = start
+                    seen[start] = true
+                    var minX = rw
+                    var maxX = 0
+                    var minY = rh
+                    var maxY = 0
+                    var cnt = 0
+                    while (sp > 0) {
+                        val i = stack[--sp]
+                        val x = i % rw
+                        val y = i / rw
+                        cnt++
+                        if (x < minX) minX = x
+                        if (x > maxX) maxX = x
+                        if (y < minY) minY = y
+                        if (y > maxY) maxY = y
+                        if (x > 0 && mask[i - 1] && !seen[i - 1]) { seen[i - 1] = true; stack[sp++] = i - 1 }
+                        if (x < rw - 1 && mask[i + 1] && !seen[i + 1]) { seen[i + 1] = true; stack[sp++] = i + 1 }
+                        if (y > 0 && mask[i - rw] && !seen[i - rw]) { seen[i - rw] = true; stack[sp++] = i - rw }
+                        if (y < rh - 1 && mask[i + rw] && !seen[i + rw]) { seen[i + rw] = true; stack[sp++] = i + rw }
+                    }
+                    val bw = maxX - minX + 1
+                    val bh = maxY - minY + 1
+                    if (cnt < 25 || bw < w * 0.015f || bw > w * 0.07f) continue
+                    val aspect = bw.toFloat() / bh
+                    val fill = cnt.toFloat() / (bw * bh)
+                    if (aspect < 0.75f || aspect > 1.35f || fill < 0.15f || fill > 0.6f) continue
+                    if (looksLikeX(mask, rw, minX, minY, bw, bh)) {
+                        out.add(Rect(reg.left + minX, reg.top + minY, reg.left + maxX + 1, reg.top + maxY + 1))
+                    }
+                }
+            }
+        }
+        return out
+    }
+
+    /** Bottom-left ka orange back-arrow button (chest result / daily reward page) dhundhta hai. */
+    fun findBackButton(bmp: Bitmap): Rect? {
+        val w = bmp.width
+        val h = bmp.height
+        val rw = (w * 0.24f).toInt()
+        val rh = (h * 0.12f).toInt()
+        if (rw < 20 || rh < 20) return null
+        val y0 = h - rh
+        val px = IntArray(rw * rh)
+        bmp.getPixels(px, 0, rw, 0, y0, rw, rh)
+        val mask = BooleanArray(rw * rh) { i ->
+            val p = px[i]
+            val r = Color.red(p)
+            val g = Color.green(p)
+            val b = Color.blue(p)
+            r > 170 && g in 70..180 && b < 120 && (r - g) > 45
+        }
+        val seen = BooleanArray(rw * rh)
+        val stack = IntArray(rw * rh)
+        var best: Rect? = null
+        var bestArea = 0
+        for (start in 0 until rw * rh) {
+            if (!mask[start] || seen[start]) continue
+            var sp = 0
+            stack[sp++] = start
+            seen[start] = true
+            var minX = rw
+            var maxX = 0
+            var minY = rh
+            var maxY = 0
+            var cnt = 0
+            while (sp > 0) {
+                val i = stack[--sp]
+                val x = i % rw
+                val y = i / rw
+                cnt++
+                if (x < minX) minX = x
+                if (x > maxX) maxX = x
+                if (y < minY) minY = y
+                if (y > maxY) maxY = y
+                if (x > 0 && mask[i - 1] && !seen[i - 1]) { seen[i - 1] = true; stack[sp++] = i - 1 }
+                if (x < rw - 1 && mask[i + 1] && !seen[i + 1]) { seen[i + 1] = true; stack[sp++] = i + 1 }
+                if (y > 0 && mask[i - rw] && !seen[i - rw]) { seen[i - rw] = true; stack[sp++] = i - rw }
+                if (y < rh - 1 && mask[i + rw] && !seen[i + rw]) { seen[i + rw] = true; stack[sp++] = i + rw }
+            }
+            val bw = maxX - minX + 1
+            val bh = maxY - minY + 1
+            val aspect = bw.toFloat() / bh
+            val fill = cnt.toFloat() / (bw * bh)
+            if (bw >= w * 0.06f && bw <= w * 0.16f && aspect in 0.75f..1.4f && fill in 0.45f..0.98f && cnt > bestArea) {
+                bestArea = cnt
+                best = Rect(minX, y0 + minY, maxX + 1, y0 + maxY + 1)
+            }
+        }
+        return best
+    }
 }

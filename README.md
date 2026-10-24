@@ -1,15 +1,26 @@
-# Chaman AutoClaim v0.3 (base)
+# Chaman AutoClaim v0.5
 
-Scope: permissions, Carrom Pool open, Free Rewards options find, popup close.
-Ad watch/exit logic + floating status line included.
+Carrom Pool daily rewards auto-claim (Accessibility + OCR). by Chaman Bhai Production.
+
+## v0.5
+- Chest screen ("Tap chest to collect"): back button aane tak chest pe tap (counter nahi), phir "You Got" screen pe back
+- "Open one more chest!" (gems wala) kabhi nahi dabta
+- Generic buttons: OK / Claim / Continue / Got it, Yes/No (kharch wale dialog me hamesha No)
+- Ad ke baad Congratulations / result screen pehchan ke ad loop khatam
+- Log box me Copy button
+
+## v0.4
+- App logo + polished UI (cards, status chip, settings yaad rehti hain)
+- Google Play Games popup: node click, animation ke baad fresh Cancel tap, fail pe system Back
+- Ad close: native node, corner OCR (X/Skip/Close), corner shape-X detector, countdown dikhe to Back nahi
+- Ad close na mile to `stuck_last.jpg` save (app me "Last stuck ad screenshot dekho")
 
 ## GitHub se APK banao
-1. Is poore folder ko GitHub repo me push karo (branch `main`).
-2. Repo > Actions > "Build APK" chalega (ya "Run workflow" dabao).
-3. Run khatam hone pe niche Artifacts se `chaman-autoclaim-debug` download karo, zip me `app-debug.apk` hoga.
+1. Poora folder GitHub repo me push karo (branch `main`).
+2. Actions > "Build APK" (ya Run workflow).
+3. Artifacts se `chaman-autoclaim-debug` download karo, zip me `app-debug.apk`.
 
 ## Phone pe setup
-1. APK install karo.
-2. App kholo, saari permissions Allow karo.
-3. Accessibility grey ho to: App info > 3 dot > "Allow restricted settings", phir Accessibility me "Chaman AutoClaim" ON.
-4. Pehle "Scan screen" se test karo (game ko Free Coins popup pe rakho), phir "Last scan dekho".
+1. APK install, saari permissions Allow.
+2. Accessibility grey ho to: App info > 3 dot > "Allow restricted settings", phir service ON.
+3. "Run once" se test karo.
