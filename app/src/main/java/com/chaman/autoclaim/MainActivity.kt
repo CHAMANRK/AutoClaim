@@ -113,7 +113,10 @@ class MainActivity : Activity() {
         }
         page.addView(sw)
         page.addView(button("1) Carrom Pool kholo") { runner.openGameOnly() })
-        page.addView(button("2) Scan screen (sirf dekho, kuch nahi dabayega)") { Thread { runner.scanOnly() }.start() })
+        page.addView(button("2) Scan screen (5 sec baad, tab tak game pe jao)") {
+            Logger.log("5 sec me game screen pe jao...")
+            Thread { Thread.sleep(5000); runner.scanOnly() }.start()
+        })
         page.addView(button("3) Run once (popup close + rewards find)") { Thread { runner.run() }.start() })
         page.addView(button("Stop") { runner.stop = true })
         page.addView(button("Last scan dekho") { showLastScan() })

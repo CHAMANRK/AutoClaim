@@ -26,7 +26,12 @@ class Runner(private val ctx: Context) {
         val lockedCount: Int,
         val closeX: Rect?,
         val closer: Rect?,
-        val collectNow: Rect?
+        val collectNow: Rect?,
+        val playGames: Boolean,
+        val cancelBtn: Rect?,
+        val dailyPage: Boolean,
+        val w: Int,
+        val h: Int
     )
 
     fun isRunning() = running
@@ -54,7 +59,13 @@ class Runner(private val ctx: Context) {
         if (closer != null) hits.add(Hit("closer", closer))
         val cn = lines.firstOrNull { it.text.lowercase().contains("collect now") }?.rect
         if (cn != null) hits.add(Hit("collect-now", cn))
-        return Analysis(hits, rewardsOpen, active, locked, x, closer, cn)
+        val playGames = lines.any { it.text.lowercase().contains("play games") }
+        val cancel = lines.firstOrNull { norm(it.text) == "cancel" }?.rect
+        if (playGames && cancel != null) hits.add(Hit("cancel", cancel))
+        val dailyPage = lines.any { it.text.lowercase().contains("claim a new reward") } ||
+            (lines.any { it.text.lowercase().contains("daily reward") } &&
+                lines.any { norm(it.text) == "rewards" && it.rect.top < shot.height * 0.12 })
+        return Analysis(hits, rewardsOpen, active, locked, x, closer, cn, playGames, cancel, dailyPage, shot.width, shot.height)
     }
 
     private fun saveAnnotated(shot: Bitmap, lines: List<OcrLine>, hits: List<Hit>) {
@@ -123,7 +134,7 @@ class Runner(private val ctx: Context) {
         Logger.log("OCR lines: ${lines.size}")
         lines.take(40).forEach { Logger.log("  '${it.text}' @ ${it.rect.flattenToString()}") }
         val an = analyze(shot, lines)
-        Logger.log("Free Coins popup: ${an.rewardsOpen} | Active Collect: ${an.active.size} | Locked: ${an.lockedCount}")
+        Logger.log("Free Coins popup: ${an.rewardsOpen} | Daily page: ${an.dailyPage} | PlayGames popup: ${an.playGames} | Active Collect: ${an.active.size} | Locked: ${an.lockedCount}")
         an.hits.forEach { Logger.log("  HIT ${it.label} @ ${it.rect.flattenToString()}") }
         saveAnnotated(shot, lines, an.hits)
         shot.recycle()
@@ -161,6 +172,8 @@ class Runner(private val ctx: Context) {
 
         var idle = 0
         var scanned = false
+        var dailyLogged = false
+        var dailyTaps = 0
         for (i in 1..30) {
             if (stop) { Logger.log("Roka gaya"); return }
 
@@ -183,7 +196,29 @@ class Runner(private val ctx: Context) {
             shot.recycle()
 
             var acted = false
-            if (an.rewardsOpen) {
+            if (!an.dailyPage) dailyTaps = 0
+            if (an.playGames) {
+                val cb = an.cancelBtn
+                val cx = cb?.exactCenterX() ?: (an.w * 0.16f)
+                val cy = cb?.exactCenterY() ?: (an.h * 0.94f)
+                svc.tap(cx, cy)
+                Logger.log("❎ Google Play Games popup: Cancel dabaya")
+                acted = true
+            } else if (an.dailyPage) {
+                if (!dailyLogged) {
+                    dailyLogged = true
+                    Logger.log("📅 Daily Reward page mila — active Collect: ${an.active.size}")
+                }
+                dailyTaps++
+                if (dailyTaps > 2) {
+                    svc.back()
+                    Logger.log("⬅️ Daily Reward page: system Back")
+                } else {
+                    svc.tap(an.w * 0.09f, an.h * 0.955f)
+                    Logger.log("⬅️ Daily Reward page: bottom-left back arrow dabaya")
+                }
+                acted = true
+            } else if (an.rewardsOpen) {
                 if (!scanned) {
                     scanned = true
                     Logger.log("🎁 Free Coins popup mila — active Collect: ${an.active.size}, locked: ${an.lockedCount}")
@@ -219,7 +254,7 @@ class Runner(private val ctx: Context) {
                 if (!sleepStop(2000)) return
             } else {
                 idle++
-                if (idle >= 3) {
+                if (idle >= 4) {
                     Logger.log("✅ Kuch aur nahi mila, run complete")
                     return
                 }

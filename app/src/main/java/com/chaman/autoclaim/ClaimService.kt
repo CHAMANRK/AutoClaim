@@ -100,7 +100,8 @@ class ClaimService : AccessibilityService() {
         val pkg = root.packageName?.toString() ?: return null
         val allowed = pkg == gamePkg || pkg == "com.android.vending" || pkg.startsWith("com.google.android.")
         if (!allowed) return null
-        for (label in CLOSE_LABELS) {
+        val labels = if (pkg == gamePkg) CLOSE_LABELS else CLOSE_LABELS + "cancel"
+        for (label in labels) {
             val nodes = root.findAccessibilityNodeInfosByText(label) ?: continue
             for (n in nodes) {
                 val t = (n.text ?: n.contentDescription)?.toString()?.trim()?.lowercase()
