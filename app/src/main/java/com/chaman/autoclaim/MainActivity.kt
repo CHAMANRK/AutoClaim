@@ -200,6 +200,7 @@ class MainActivity : Activity() {
         setCard.addView(toggle("Rewards claim + ad logic", "claim", true) { runner.tapCollect = it })
         setCard.addView(toggle("Daily Reward ka Collect bhi claim karo", "daily", false) { runner.claimDaily = it })
         setCard.addView(toggle("Extra screens: chest, OK / Claim / Yes / No", "extras", true) { runner.handleExtras = it })
+        setCard.addView(toggle("Playable ad: \"Google Play >>\" dabao (X na mile toh)", "cta", true) { runner.tapPlayCta = it })
         setCard.addView(toggle("Floating status line", "overlay", true) {
             StatusOverlay.enabled = it
             if (!it) StatusOverlay.hide()

@@ -16,9 +16,12 @@ class Runner(private val ctx: Context) {
     @Volatile var tapCollect = true
     @Volatile var claimDaily = false
     @Volatile var handleExtras = true
+    @Volatile var tapPlayCta = true
     @Volatile private var running = false
 
     private var gamePkg = "com.miniclip.carrom"
+    private var adBacks = 0
+    private var ctaTaps = 0
 
     private val closerWords = setOf("not now", "no thanks", "no, thanks", "maybe later", "later", "skip", "close", "dismiss")
     private val adCloseWords = setOf("x", "×", "✕", "✖", "close", "skip", "skip ad", "close ad", "done", "continue")
@@ -236,6 +239,7 @@ class Runner(private val ctx: Context) {
      * Safety: kharch (gems/buy/spend...) wale dialog me kabhi positive nahi dabata.
      */
     private fun pickDialogButton(an: Analysis): Pair<OcrLine, String>? {
+        if (an.playGames) return null
         val full = an.lines.joinToString(" ") { it.text.lowercase() }
         val cost = costWords.any { full.contains(it) }
 
@@ -342,13 +346,24 @@ class Runner(private val ctx: Context) {
         }
         val countdown = lines.any { inCorner(it.rect, w, h) && isCountdown(it.text) }
         if (countdown && elapsed < 60_000) {
-            Logger.log("⏳ Countdown dikh raha hai, Back nahi dabaunga")
+            Logger.log("⏳ Countdown dikh raha hai, Back/CTA nahi dabaunga")
             return false
         }
         if (cycles >= 2) saveAnnotatedTo("stuck_last.jpg", shot, lines, emptyList())
-        if (cycles >= 3) {
+        // Playable ads: X tab aata hai jab "Google Play >>" dabate hain
+        if (tapPlayCta && cycles >= 2 && ctaTaps < 2) {
+            val cta = lines.firstOrNull { norm(it.text).contains("google play") && it.rect.centerY() < h * 0.2 }
+            if (cta != null) {
+                ctaTaps++
+                svc.tap(cta.rect.exactCenterX(), cta.rect.exactCenterY())
+                Logger.log("🎯 Playable ad: 'Google Play >>' dabaya ($ctaTaps/2), X uske baad aata hai")
+                return true
+            }
+        }
+        if (cycles >= 3 && adBacks < 2) {
+            adBacks++
             svc.back()
-            Logger.log("⬅️ Ad: system Back (cycle $cycles)")
+            Logger.log("⬅️ Ad: system Back $adBacks/2 (cycle $cycles)")
             return true
         }
         return false
@@ -367,6 +382,8 @@ class Runner(private val ctx: Context) {
         var cycles = 0
         var storeBacks = 0
         svc.resetWindowInfo()
+        adBacks = 0
+        ctaTaps = 0
         Logger.log("📺 Ad ka wait shuru")
         if (!sleepStop(3000)) return AdResult.STOPPED
 
@@ -388,6 +405,7 @@ class Runner(private val ctx: Context) {
                 storeBacks++
                 Logger.log("↩️ Store/browser khula ($fp), Back")
                 svc.back()
+                nextCycle = minOf(nextCycle, System.currentTimeMillis() + 3500)
                 if (storeBacks >= 3) launchGame()
                 if (!sleepStop(2000)) return AdResult.STOPPED
                 continue
@@ -505,32 +523,28 @@ class Runner(private val ctx: Context) {
             if (!an.dailyPage) dailyTaps = 0
             if (!an.playGames) pgTaps = 0
 
-            if (an.playGames) {
+            if (an.playGames && pgTaps < 5) {
                 pgTaps++
-                if (pgTaps > 2) {
+                if (pgTaps % 2 == 1) {
+                    // Logs me system Back kaam kiya, Cancel-tap nahi: isliye pehle Back
                     svc.back()
                     Logger.log("⬅️ Play Games popup: system Back (try $pgTaps)")
                 } else {
-                    val viaNode = svc.clickCloseNode(setOf("cancel"))
-                    if (viaNode != null) {
-                        Logger.log("❎ Play Games popup: Cancel (node)")
-                    } else {
-                        // popup slide animation ho sakti hai: thoda ruk ke fresh position pe tap
-                        if (!sleepStop(700)) return
-                        var rect: Rect? = an.cancelBtn
-                        val s2 = svc.screenshot()
-                        if (s2 != null) {
-                            val c2 = Detector.ocr(s2).firstOrNull { norm(it.text) == "cancel" }?.rect
-                            if (c2 != null) rect = c2
-                            s2.recycle()
-                        }
-                        val cx = rect?.exactCenterX() ?: (an.w * 0.16f)
-                        val cy = rect?.exactCenterY() ?: (an.h * 0.94f)
-                        svc.tap(cx, cy)
-                        Logger.log("❎ Play Games popup: Cancel dabaya (try $pgTaps)")
+                    var rect: Rect? = an.cancelBtn
+                    val s2 = svc.screenshot()
+                    if (s2 != null) {
+                        val c2 = Detector.ocr(s2).firstOrNull { norm(it.text) == "cancel" }?.rect
+                        if (c2 != null) rect = c2
+                        s2.recycle()
                     }
+                    val cx = rect?.exactCenterX() ?: (an.w * 0.16f)
+                    val cy = rect?.exactCenterY() ?: (an.h * 0.94f)
+                    svc.tap(cx, cy)
+                    Logger.log("❎ Play Games popup: Cancel dabaya (try $pgTaps)")
                 }
                 acted = true
+            } else if (an.playGames) {
+                Logger.log("⚠️ Play Games popup 5 try me nahi gaya, chhod rahe hain (Continue nahi dabaunga)")
             } else if (handleExtras && an.chestTap && chestRuns < 4) {
                 chestRuns++
                 chestLoop(svc, an.w, an.h)

@@ -158,11 +158,18 @@ object Detector {
             val rh = reg.height()
             val px = IntArray(rw * rh)
             bmp.getPixels(px, 0, rw, reg.left, reg.top, rw, rh)
-            for (bright in listOf(true, false)) {
+            for (mode in 0..2) {
                 val mask = BooleanArray(rw * rh) { i ->
                     val p = px[i]
-                    val l = (Color.red(p) * 299 + Color.green(p) * 587 + Color.blue(p) * 114) / 1000
-                    if (bright) l > 185 else l < 75
+                    val pr = Color.red(p)
+                    val pg = Color.green(p)
+                    val pb = Color.blue(p)
+                    val l = (pr * 299 + pg * 587 + pb * 114) / 1000
+                    when (mode) {
+                        0 -> l > 185
+                        1 -> l < 75
+                        else -> pr > 215 && pg > 215 && pb > 215
+                    }
                 }
                 val seen = BooleanArray(rw * rh)
                 val stack = IntArray(rw * rh)

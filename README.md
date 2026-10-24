@@ -1,6 +1,12 @@
-# Chaman AutoClaim v0.5
+# Chaman AutoClaim v0.5.1
 
 Carrom Pool daily rewards auto-claim (Accessibility + OCR). by Chaman Bhai Production.
+
+## v0.5.1
+- Ad close: white X (yellow/colored square ke andar) bhi detect hota hai
+- Playable ads: X na mile toh "Google Play >>" dabata hai (max 2), store khule toh Back, phir X
+- Ad me system Back max 2 baar
+- Play Games popup: pehle system Back, phir Cancel tap (5 try tak), Continue kabhi nahi
 
 ## v0.5
 - Chest screen ("Tap chest to collect"): back button aane tak chest pe tap (counter nahi), phir "You Got" screen pe back
