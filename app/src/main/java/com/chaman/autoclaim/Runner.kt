@@ -13,11 +13,27 @@ import java.io.FileOutputStream
 class Runner(private val ctx: Context) {
 
     @Volatile var stop = false
-    @Volatile var tapCollect = false
+    @Volatile var tapCollect = true
+    @Volatile var claimDaily = false
     @Volatile private var running = false
 
     private var gamePkg = "com.miniclip.carrom"
     private val closerWords = setOf("not now", "no thanks", "no, thanks", "maybe later", "later", "skip", "close", "dismiss")
+    private val adCloseWords = setOf("x", "×", "✕", "✖", "close", "skip", "skip ad", "close ad", "done", "continue")
+    private val adNodeLabels = setOf("close", "close ad", "skip", "skip ad", "dismiss", "done", "x", "×", "✕", "continue")
+    private val adClassHints = listOf(
+        ".ads.", "adactivity", "applovin", "ironsource", "vungle", "adcolony", "mbridge", "chartboost",
+        "inmobi", "pangle", "bytedance.sdk", "fyber", "admob", "unityads", "unity3d.ads",
+        "interstitial", "rewarded", "fullscreenad"
+    )
+
+    private enum class AdResult { DONE, NOAD, TIMEOUT, STOPPED }
+
+    companion object {
+        private const val AD_TIMEOUT_MS = 120_000L
+        private const val CYCLE_MS = 10_000L
+        private const val MAX_CLAIMS = 6
+    }
 
     class Analysis(
         val hits: List<Hit>,
@@ -41,6 +57,12 @@ class Runner(private val ctx: Context) {
     private fun isCollectLabel(t: String): Boolean {
         val s = t.lowercase().trim()
         return s.startsWith("collect") && !s.contains(":") && !s.contains("now") && !s.contains(" in")
+    }
+
+    private fun isAdClass(cn: String?): Boolean {
+        if (cn == null) return false
+        val s = cn.lowercase()
+        return adClassHints.any { s.contains(it) }
     }
 
     fun analyze(shot: Bitmap, lines: List<OcrLine>): Analysis {
@@ -148,14 +170,149 @@ class Runner(private val ctx: Context) {
         }
         running = true
         stop = false
+        StatusOverlay.show()
         try {
             runInner()
         } catch (t: Throwable) {
             Logger.log("Run error: ${t.message}")
         } finally {
             running = false
+            StatusOverlay.update("AutoClaim: run khatam")
+            StatusOverlay.hideLater(4000)
         }
     }
+
+    // ---------------------------------------------------------------- ad handling
+
+    private fun saveStuck(svc: ClaimService) {
+        val shot = svc.screenshot() ?: return
+        try {
+            FileOutputStream(File(ctx.filesDir, "stuck_last.jpg")).use { shot.compress(Bitmap.CompressFormat.JPEG, 80, it) }
+            val lines = Detector.ocr(shot)
+            Logger.log("📸 Stuck screenshot save hui. Text: " + lines.take(12).joinToString(" | ") { it.text })
+        } catch (t: Throwable) {
+            Logger.log("Stuck save error: ${t.message}")
+        }
+        shot.recycle()
+    }
+
+    private fun inCorner(r: Rect, w: Int, h: Int): Boolean {
+        val cx = r.centerX()
+        val cy = r.centerY()
+        return (cy < h * 0.2 || cy > h * 0.88) && (cx < w * 0.3 || cx > w * 0.7)
+    }
+
+    /** Ek close attempt: native node -> corner OCR (X/Skip/Close) -> (3rd cycle ke baad) system Back. */
+    private fun closeCycle(svc: ClaimService, shot: Bitmap, lines: List<OcrLine>, cycles: Int): Boolean {
+        val node = svc.clickCloseNode(adNodeLabels)
+        if (node != null) {
+            Logger.log("❎ Ad close (node): $node")
+            return true
+        }
+        val w = shot.width
+        val h = shot.height
+        val cand = lines.firstOrNull { adCloseWords.contains(norm(it.text)) && inCorner(it.rect, w, h) }
+        if (cand != null) {
+            svc.tap(cand.rect.exactCenterX(), cand.rect.exactCenterY())
+            Logger.log("❎ Ad close (OCR): '${cand.text}'")
+            return true
+        }
+        if (cycles >= 3) {
+            svc.back()
+            Logger.log("⬅️ Ad: system Back (cycle $cycles)")
+            return true
+        }
+        return false
+    }
+
+    /**
+     * Collect dabane ke baad call hota hai. Ad chalne se lekar popup wapas aane tak watch karta hai.
+     * Har 10 sec me ek close cycle; max 120 sec.
+     */
+    private fun handleAd(svc: ClaimService): AdResult {
+        val start = System.currentTimeMillis()
+        var adSeen = false
+        var adClassSeen = false
+        var classBackSince = 0L
+        var nextCycle = start + CYCLE_MS
+        var cycles = 0
+        var storeBacks = 0
+        svc.resetWindowInfo()
+        Logger.log("📺 Ad ka wait shuru")
+        if (!sleepStop(3000)) return AdResult.STOPPED
+
+        while (true) {
+            if (stop) return AdResult.STOPPED
+            val now = System.currentTimeMillis()
+            val elapsed = now - start
+            if (elapsed > AD_TIMEOUT_MS) {
+                Logger.log("⏱ Ad timeout (${AD_TIMEOUT_MS / 1000}s)")
+                saveStuck(svc)
+                svc.back()
+                Thread.sleep(800)
+                svc.back()
+                return AdResult.TIMEOUT
+            }
+
+            val fp = svc.foregroundPackage()
+            if (fp != null && (fp == "com.android.vending" || fp.contains("chrome") || fp.contains("browser"))) {
+                storeBacks++
+                Logger.log("↩️ Store/browser khula ($fp), Back")
+                svc.back()
+                if (storeBacks >= 3) launchGame()
+                if (!sleepStop(2000)) return AdResult.STOPPED
+                continue
+            }
+
+            if (isAdClass(svc.lastWindowClass)) {
+                adClassSeen = true
+                classBackSince = 0L
+            } else if (adClassSeen && svc.lastWindowPkg == gamePkg) {
+                if (classBackSince == 0L) classBackSince = now
+                if (now - classBackSince >= 6000) {
+                    Logger.log("✅ Ad Activity band, game wapas (popup text nahi dikha)")
+                    return AdResult.DONE
+                }
+            }
+
+            val shot = svc.screenshot()
+            if (shot != null) {
+                val lines = Detector.ocr(shot)
+                val an = analyze(shot, lines)
+                val popupBack = an.rewardsOpen || an.dailyPage
+                if (!popupBack) adSeen = true
+                if (adSeen && popupBack) {
+                    shot.recycle()
+                    Logger.log("✅ Ad khatam, popup wapas")
+                    sleepStop(1500)
+                    return AdResult.DONE
+                }
+                if (!adSeen && elapsed > 12000) {
+                    shot.recycle()
+                    Logger.log("Ad shuru nahi hua (popup wahi hai)")
+                    return AdResult.NOAD
+                }
+                if (now >= nextCycle) {
+                    cycles++
+                    nextCycle = now + CYCLE_MS
+                    val did = closeCycle(svc, shot, lines, cycles)
+                    shot.recycle()
+                    if (did) {
+                        if (!sleepStop(5000)) return AdResult.STOPPED
+                        continue
+                    } else {
+                        Logger.log("🔎 Cycle $cycles: close nahi mila")
+                    }
+                } else {
+                    shot.recycle()
+                }
+            }
+            StatusOverlay.update("📺 Ad chal raha hai (${elapsed / 1000}s, cycle $cycles)")
+            if (!sleepStop(2000)) return AdResult.STOPPED
+        }
+    }
+
+    // ---------------------------------------------------------------- main run
 
     private fun runInner() {
         val svc = ClaimService.instance
@@ -168,14 +325,25 @@ class Runner(private val ctx: Context) {
             return
         }
         Logger.log("Game khul raha hai, 12 sec wait...")
-        if (!sleepStop(12000)) { Logger.log("Roka gaya"); return }
+        if (!sleepStop(12000)) {
+            Logger.log("Roka gaya")
+            return
+        }
 
         var idle = 0
         var scanned = false
         var dailyLogged = false
         var dailyTaps = 0
-        for (i in 1..30) {
-            if (stop) { Logger.log("Roka gaya"); return }
+        var dailyClaimTries = 0
+        var claimsDone = 0
+        var claimFails = 0
+        var lastTexts = ""
+
+        for (i in 1..60) {
+            if (stop) {
+                Logger.log("Roka gaya")
+                return
+            }
 
             val nat = svc.closeNativeDialog(gamePkg)
             if (nat != null) {
@@ -192,11 +360,13 @@ class Runner(private val ctx: Context) {
             }
             val lines = Detector.ocr(shot)
             val an = analyze(shot, lines)
+            lastTexts = lines.take(12).joinToString(" | ") { it.text }
             saveAnnotated(shot, lines, an.hits)
             shot.recycle()
 
             var acted = false
             if (!an.dailyPage) dailyTaps = 0
+
             if (an.playGames) {
                 val cb = an.cancelBtn
                 val cx = cb?.exactCenterX() ?: (an.w * 0.16f)
@@ -209,31 +379,59 @@ class Runner(private val ctx: Context) {
                     dailyLogged = true
                     Logger.log("📅 Daily Reward page mila — active Collect: ${an.active.size}")
                 }
-                dailyTaps++
-                if (dailyTaps > 2) {
-                    svc.back()
-                    Logger.log("⬅️ Daily Reward page: system Back")
+                if (claimDaily && tapCollect && an.active.isNotEmpty() && dailyClaimTries < 2) {
+                    dailyClaimTries++
+                    val r = an.active.minByOrNull { it.top }!!
+                    Logger.log("👆 Daily Collect dabaya")
+                    svc.tap(r.exactCenterX(), r.exactCenterY())
+                    val res = handleAd(svc)
+                    if (res == AdResult.STOPPED) {
+                        Logger.log("Roka gaya")
+                        return
+                    }
+                    if (res == AdResult.DONE) Logger.log("🎉 Daily reward claim ho gaya") else Logger.log("⚠️ Daily claim fail ($res)")
+                    acted = true
                 } else {
-                    svc.tap(an.w * 0.09f, an.h * 0.955f)
-                    Logger.log("⬅️ Daily Reward page: bottom-left back arrow dabaya")
+                    dailyTaps++
+                    if (dailyTaps > 2) {
+                        svc.back()
+                        Logger.log("⬅️ Daily Reward page: system Back")
+                    } else {
+                        svc.tap(an.w * 0.09f, an.h * 0.955f)
+                        Logger.log("⬅️ Daily Reward page: bottom-left back arrow dabaya")
+                    }
+                    acted = true
                 }
-                acted = true
             } else if (an.rewardsOpen) {
                 if (!scanned) {
                     scanned = true
                     Logger.log("🎁 Free Coins popup mila — active Collect: ${an.active.size}, locked: ${an.lockedCount}")
-                    if (tapCollect && an.active.isNotEmpty()) {
-                        val r = an.active.minByOrNull { it.top }!!
-                        svc.tap(r.exactCenterX(), r.exactCenterY())
-                        Logger.log("Collect dabaya. Ad logic abhi nahi hai, run roka.")
+                }
+                if (tapCollect && claimsDone < MAX_CLAIMS && claimFails < 2 && an.active.isNotEmpty()) {
+                    val r = an.active.minByOrNull { it.top }!!
+                    Logger.log("👆 Collect dabaya (reward ${claimsDone + 1})")
+                    svc.tap(r.exactCenterX(), r.exactCenterY())
+                    val res = handleAd(svc)
+                    if (res == AdResult.STOPPED) {
+                        Logger.log("Roka gaya")
                         return
                     }
-                }
-                val x = an.closeX
-                if (x != null) {
-                    svc.tap(x.exactCenterX(), x.exactCenterY())
-                    Logger.log("❎ Rewards popup ka X dabaya")
+                    if (res == AdResult.DONE) {
+                        claimsDone++
+                        claimFails = 0
+                        Logger.log("🎉 Reward $claimsDone claim ho gaya")
+                    } else {
+                        claimFails++
+                        Logger.log("⚠️ Reward claim fail ($res)")
+                    }
                     acted = true
+                } else {
+                    val x = an.closeX
+                    if (x != null) {
+                        svc.tap(x.exactCenterX(), x.exactCenterY())
+                        Logger.log("❎ Rewards popup ka X dabaya")
+                        acted = true
+                    }
                 }
             } else {
                 val c = an.closer ?: an.closeX
@@ -255,12 +453,13 @@ class Runner(private val ctx: Context) {
             } else {
                 idle++
                 if (idle >= 4) {
-                    Logger.log("✅ Kuch aur nahi mila, run complete")
+                    Logger.log("✅ Kuch aur nahi mila, run complete (claims: $claimsDone)")
+                    Logger.log("Last screen text: $lastTexts")
                     return
                 }
                 if (!sleepStop(2500)) return
             }
         }
-        Logger.log("Max steps ho gaye, run khatam")
+        Logger.log("Max steps ho gaye, run khatam (claims: $claimsDone)")
     }
 }

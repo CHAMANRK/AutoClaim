@@ -19,6 +19,7 @@ object Logger {
             if (buf.length > 30000) buf.delete(0, 10000)
         }
         Log.d("AutoClaim", msg)
+        StatusOverlay.update(msg)
         listener?.invoke(line)
     }
 

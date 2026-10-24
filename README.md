@@ -1,7 +1,7 @@
-# Chaman AutoClaim v0.2 (base)
+# Chaman AutoClaim v0.3 (base)
 
 Scope: permissions, Carrom Pool open, Free Rewards options find, popup close.
-Ad watch/exit logic next version me.
+Ad watch/exit logic + floating status line included.
 
 ## GitHub se APK banao
 1. Is poore folder ko GitHub repo me push karo (branch `main`).

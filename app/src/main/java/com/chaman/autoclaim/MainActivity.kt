@@ -59,6 +59,15 @@ class MainActivity : Activity() {
             setPadding(0, dp(top), 0, dp(4))
         }
 
+    private fun toggle(text: String, init: Boolean, onChange: (Boolean) -> Unit): Switch =
+        Switch(this).apply {
+            this.text = text
+            setTextColor(0xFFD9C7B8.toInt())
+            isChecked = init
+            setOnCheckedChangeListener { _, c -> onChange(c) }
+            setPadding(0, dp(6), 0, dp(6))
+        }
+
     private fun button(text: String, onClick: () -> Unit): Button =
         Button(this).apply {
             this.text = text
@@ -106,12 +115,9 @@ class MainActivity : Activity() {
         ))
 
         page.addView(label("TOOLS", 13f, gold, 20))
-        val sw = Switch(this).apply {
-            text = "Collect bhi dabao (ad logic abhi nahi, OFF rakho)"
-            setTextColor(soft)
-            setOnCheckedChangeListener { _, c -> runner.tapCollect = c }
-        }
-        page.addView(sw)
+        page.addView(toggle("Rewards claim + ad logic (Collect dabake ad dekhe)", true) { runner.tapCollect = it })
+        page.addView(toggle("Daily Reward page ka Collect bhi claim karo", false) { runner.claimDaily = it })
+        page.addView(toggle("Floating status line", true) { StatusOverlay.enabled = it; if (!it) StatusOverlay.hide() })
         page.addView(button("1) Carrom Pool kholo") { runner.openGameOnly() })
         page.addView(button("2) Scan screen (5 sec baad, tab tak game pe jao)") {
             Logger.log("5 sec me game screen pe jao...")
@@ -119,7 +125,8 @@ class MainActivity : Activity() {
         })
         page.addView(button("3) Run once (popup close + rewards find)") { Thread { runner.run() }.start() })
         page.addView(button("Stop") { runner.stop = true })
-        page.addView(button("Last scan dekho") { showLastScan() })
+        page.addView(button("Last scan dekho") { showImage("last_scan.jpg") })
+        page.addView(button("Last stuck ad screenshot dekho") { showImage("stuck_last.jpg") })
 
         page.addView(label("LOG", 13f, gold, 20))
         logView = TextView(this).apply {
@@ -153,10 +160,10 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun showLastScan() {
-        val f = File(filesDir, "last_scan.jpg")
+    private fun showImage(name: String) {
+        val f = File(filesDir, name)
         if (!f.exists()) {
-            Logger.log("Abhi koi scan nahi hua")
+            Logger.log("Abhi $name nahi bani")
             return
         }
         val bmp = BitmapFactory.decodeFile(f.absolutePath)
