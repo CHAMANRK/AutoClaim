@@ -37,6 +37,8 @@ class Runner(private val ctx: Context) {
         "congratulations", "you have received", "you received", "you got", "tap chest to collect", "reward claimed"
     )
     private val navWords = setOf("home", "friends", "equipment", "events", "shop")
+    // ad screens ke text me aate hain (game ke lobby/popup me nahi)
+    private val adIndicators = listOf("install", "download", "get it on", "google play", "learn more", "sponsored", "app store")
 
     // generic dialog buttons
     private val costWords = listOf(
@@ -75,6 +77,10 @@ class Runner(private val ctx: Context) {
         val resultScreen: Boolean,
         val navCount: Int,
         val backBtn: Rect?,
+        val adLike: Boolean,
+        val backAny: Rect?,
+        val cornerX: Rect?,
+        val lobbyText: Boolean,
         val w: Int,
         val h: Int
     )
@@ -94,9 +100,9 @@ class Runner(private val ctx: Context) {
         return adClassHints.any { s.contains(it) }
     }
 
-    private fun isGameScreen(an: Analysis) = an.rewardsOpen || an.dailyPage || an.resultScreen || an.navCount >= 2
+    private fun isGameScreen(an: Analysis) = an.rewardsOpen || an.dailyPage || an.resultScreen || an.lobbyText || an.navCount >= 3
 
-    fun analyze(shot: Bitmap, lines: List<OcrLine>): Analysis {
+    fun analyze(shot: Bitmap, lines: List<OcrLine>, deep: Boolean = false): Analysis {
         val hits = ArrayList<Hit>()
         val low = lines.map { it.text.lowercase() }
         val rewardsOpen = low.any { it.contains("free coins") }
@@ -122,12 +128,27 @@ class Runner(private val ctx: Context) {
         val chestTap = low.any { it.contains("tap chest") }
         val youGot = low.any { it.contains("you got") }
         val resultScreen = low.any { t -> resultMarkers.any { t.contains(it) } }
-        val navCount = lines.count { navWords.contains(norm(it.text)) }
+        // bug fix: pehle lines gin rahe the (ad me "Home" 2 baar aaya toh lobby samajh liya).
+        // Ab alag-alag nav words, sirf screen ke neeche ke 15% me.
+        val navSeen = HashSet<String>()
+        for (l in lines) {
+            val n = norm(l.text)
+            if (navWords.contains(n) && l.rect.centerY() > shot.height * 0.85) navSeen.add(n)
+        }
+        val navCount = navSeen.size
+        val adLike = low.any { t -> adIndicators.any { t.contains(it) } }
+        val lobbyText = low.any { it.contains("lucky shot") || it.contains("leaderboards") } ||
+            (!rewardsOpen && low.any { it.contains("free rewards") })
+        // deep = global back finder (sirf cleanup phase me, jab lobby nahi dikh raha)
+        val backAny = if (deep && navCount < 3) Detector.findBackButton(shot) else backBtn
+        val cornerX = if (deep && navCount < 3) Detector.findCornerX(shot).minByOrNull { it.centerY() } else null
+        if (deep && backAny != null && backBtn == null) hits.add(Hit("back*", backAny))
+        if (cornerX != null) hits.add(Hit("corner-X", cornerX))
         val backBtn = if (youGot || dailyPage) Detector.findBackButton(shot) else null
         if (backBtn != null) hits.add(Hit("back", backBtn))
         return Analysis(
             lines, hits, rewardsOpen, active, locked, x, closer, cn, playGames, cancel, dailyPage,
-            chestTap, youGot, resultScreen, navCount, backBtn, shot.width, shot.height
+            chestTap, youGot, resultScreen, navCount, backBtn, adLike, backAny, cornerX, lobbyText, shot.width, shot.height
         )
     }
 
@@ -199,10 +220,10 @@ class Runner(private val ctx: Context) {
         val lines = Detector.ocr(shot)
         Logger.log("OCR lines: ${lines.size}")
         lines.take(40).forEach { Logger.log("  '${it.text}' @ ${it.rect.flattenToString()}") }
-        val an = analyze(shot, lines)
+        val an = analyze(shot, lines, deep = true)
         Logger.log(
             "FreeCoins: ${an.rewardsOpen} | Daily: ${an.dailyPage} | PlayGames: ${an.playGames} | " +
-                "Chest: ${an.chestTap} | YouGot: ${an.youGot} | Result: ${an.resultScreen} | Nav: ${an.navCount} | " +
+                "Chest: ${an.chestTap} | YouGot: ${an.youGot} | Result: ${an.resultScreen} | Nav: ${an.navCount} | AdLike: ${an.adLike} | LobbyText: ${an.lobbyText} | BackFinder: ${an.backAny != null} | CornerX: ${an.cornerX != null} | " +
                 "ActiveCollect: ${an.active.size} | Locked: ${an.lockedCount}"
         )
         val gb = pickDialogButton(an)
@@ -381,6 +402,8 @@ class Runner(private val ctx: Context) {
         var nextCycle = start + CYCLE_MS
         var cycles = 0
         var storeBacks = 0
+        var gameStreak = 0
+        var lastAdLike = false
         svc.resetWindowInfo()
         adBacks = 0
         ctaTaps = 0
@@ -416,7 +439,7 @@ class Runner(private val ctx: Context) {
                 classBackSince = 0L
             } else if (adClassSeen && svc.lastWindowPkg == gamePkg) {
                 if (classBackSince == 0L) classBackSince = now
-                if (now - classBackSince >= 6000) {
+                if (now - classBackSince >= 10000 && !lastAdLike) {
                     Logger.log("✅ Ad Activity band, game wapas (screen text nahi pehchana)")
                     return AdResult.DONE
                 }
@@ -426,17 +449,16 @@ class Runner(private val ctx: Context) {
             if (shot != null) {
                 val lines = Detector.ocr(shot)
                 val an = analyze(shot, lines)
-                if (an.resultScreen) {
-                    shot.recycle()
-                    Logger.log("✅ Reward/result screen aayi, ad khatam")
-                    return AdResult.DONE
-                }
-                val gameBack = isGameScreen(an)
+                lastAdLike = an.adLike
+                // game screen tab maanenge jab ad ke text (install/download/google play...) na ho
+                // aur lagatar 2 baar dikhe (ek frame ke dhoke se bachne ke liye)
+                val gameBack = isGameScreen(an) && !an.adLike
+                if (gameBack) gameStreak++ else gameStreak = 0
                 if (!gameBack) adSeen = true
-                if (adSeen && gameBack) {
+                if (gameBack && gameStreak >= 2 && (adSeen || an.resultScreen)) {
                     shot.recycle()
-                    Logger.log("✅ Ad khatam, game screen wapas")
-                    sleepStop(1500)
+                    Logger.log(if (an.resultScreen) "✅ Reward/result screen aayi, ad khatam" else "✅ Ad khatam, game screen wapas")
+                    if (!an.resultScreen) sleepStop(1000)
                     return AdResult.DONE
                 }
                 if (!adSeen && elapsed > 12000) {
@@ -464,6 +486,34 @@ class Runner(private val ctx: Context) {
         }
     }
 
+    /** Game khulne ka intezaar: max 12 sec. 5 sec baad har 1 sec check (lobby / koi page / popup). */
+    private fun waitForGameOpen(svc: ClaimService): Boolean {
+        val t0 = System.currentTimeMillis()
+        Logger.log("Game khul raha hai (max 12 sec, 5 sec baad har sec check)")
+        if (!sleepStop(5000)) return false
+        while (System.currentTimeMillis() - t0 < 12000) {
+            if (stop) return false
+            val fp = svc.foregroundPackage()
+            val shot = svc.screenshot()
+            if (shot != null) {
+                val lines = Detector.ocr(shot)
+                val an = analyze(shot, lines)
+                shot.recycle()
+                val inGame = fp == null || fp == gamePkg || fp.startsWith("com.google.android.")
+                val signal = an.navCount >= 3 || an.lobbyText || an.rewardsOpen || an.dailyPage || an.playGames ||
+                    an.chestTap || an.youGot || an.resultScreen || an.closeX != null || an.closer != null || lines.size >= 8
+                if (inGame && signal) {
+                    val sec = (System.currentTimeMillis() - t0) / 1000
+                    Logger.log("✅ Game/page khul gaya (${sec}s)")
+                    return true
+                }
+            }
+            if (!sleepStop(1000)) return false
+        }
+        Logger.log("⏱ 12 sec ho gaye, aage badhte hain")
+        return true
+    }
+
     // ---------------------------------------------------------------- main run
 
     private fun runInner() {
@@ -476,8 +526,7 @@ class Runner(private val ctx: Context) {
             Logger.log("❌ Carrom Pool app nahi mila")
             return
         }
-        Logger.log("Game khul raha hai, 12 sec wait...")
-        if (!sleepStop(12000)) {
+        if (!waitForGameOpen(svc)) {
             Logger.log("Roka gaya")
             return
         }
@@ -492,9 +541,19 @@ class Runner(private val ctx: Context) {
         var lastTexts = ""
         var pgTaps = 0
         var chestRuns = 0
+        var lobbyWaits = 0
+        var unexpectedAds = 0
         val genericCount = HashMap<String, Int>()
+        // phase 0 = cleanup (back finder + 3x lobby confirm), phase 1 = rewards claim
+        var phase = 0
+        var lobbyConfirm = 0
+        var unknownCount = 0
+        var globalTaps = 0
+        var sysBacks = 0
+        val phase0Start = System.currentTimeMillis()
+        Logger.log("🧹 Cleanup phase: popups/pages band karke lobby 3 baar confirm karenge")
 
-        for (i in 1..80) {
+        for (i in 1..120) {
             if (stop) {
                 Logger.log("Roka gaya")
                 return
@@ -514,10 +573,16 @@ class Runner(private val ctx: Context) {
                 continue
             }
             val lines = Detector.ocr(shot)
-            val an = analyze(shot, lines)
+            val an = analyze(shot, lines, deep = phase == 0)
             lastTexts = lines.take(12).joinToString(" | ") { it.text }
             saveAnnotated(shot, lines, an.hits)
             shot.recycle()
+
+            val lobbyNow = !an.adLike && (an.navCount >= 3 || an.lobbyText || an.collectNow != null)
+            if (phase == 0 && an.rewardsOpen) {
+                phase = 1
+                Logger.log("🎁 Free Coins popup pehle se khula hai, seedha claim tab")
+            }
 
             var acted = false
             if (!an.dailyPage) dailyTaps = 0
@@ -545,6 +610,16 @@ class Runner(private val ctx: Context) {
                 acted = true
             } else if (an.playGames) {
                 Logger.log("⚠️ Play Games popup 5 try me nahi gaya, chhod rahe hain (Continue nahi dabaunga)")
+            } else if (an.adLike && !isGameScreen(an) && unexpectedAds < 3) {
+                unexpectedAds++
+                Logger.log("📺 Ad screen mili (bina Collect ke), close karte hain")
+                val res = handleAd(svc)
+                if (res == AdResult.STOPPED) {
+                    Logger.log("Roka gaya")
+                    return
+                }
+                Logger.log("Ad result: $res")
+                acted = true
             } else if (handleExtras && an.chestTap && chestRuns < 4) {
                 chestRuns++
                 chestLoop(svc, an.w, an.h)
@@ -650,12 +725,63 @@ class Runner(private val ctx: Context) {
                         svc.tap(c.exactCenterX(), c.exactCenterY())
                         Logger.log("❎ Popup band kiya")
                         acted = true
-                    } else if (!scanned && cn != null) {
+                    } else if (phase == 1 && !scanned && cn != null) {
                         svc.tap(cn.exactCenterX(), cn.exactCenterY())
                         Logger.log("Free Rewards khola")
                         acted = true
+                    } else if (phase == 0 && !lobbyNow) {
+                        // GLOBAL BACK FINDER: koi anjaan page ho toh back/close dhundho
+                        val b = an.backAny
+                        val cxr = an.cornerX
+                        if (b != null && globalTaps < 8) {
+                            globalTaps++
+                            svc.tap(b.exactCenterX(), b.exactCenterY())
+                            Logger.log("⬅️ Back finder: back button dabaya ($globalTaps)")
+                            acted = true
+                        } else if (cxr != null && unknownCount >= 2 && globalTaps < 8) {
+                            globalTaps++
+                            svc.tap(cxr.exactCenterX(), cxr.exactCenterY())
+                            Logger.log("❎ Back finder: corner X dabaya ($globalTaps)")
+                            acted = true
+                        } else {
+                            unknownCount++
+                            if (unknownCount == 1) Logger.log("❓ Anjaan page: $lastTexts")
+                            if (unknownCount >= 3 && sysBacks < 3 && lines.size >= 5) {
+                                sysBacks++
+                                svc.back()
+                                Logger.log("⬅️ Back finder: system Back $sysBacks/3")
+                                acted = true
+                            }
+                        }
                     }
                 }
+            }
+
+            if (phase == 0) {
+                if (acted) {
+                    lobbyConfirm = 0
+                    if (!sleepStop(1500)) return
+                } else if (lobbyNow) {
+                    lobbyConfirm++
+                    unknownCount = 0
+                    Logger.log("🏠 Lobby capture $lobbyConfirm/3")
+                    if (lobbyConfirm >= 3) {
+                        phase = 1
+                        idle = 0
+                        Logger.log("✅ Lobby 3/3 confirm, ab Free Rewards / claim tab")
+                    } else if (!sleepStop(1000)) {
+                        return
+                    }
+                } else {
+                    lobbyConfirm = 0
+                    if (!sleepStop(1000)) return
+                }
+                if (phase == 0 && System.currentTimeMillis() - phase0Start > 60_000) {
+                    phase = 1
+                    idle = 0
+                    Logger.log("⏱ Cleanup 60 sec ho gaye, lobby confirm nahi hua. Phir bhi claim try karte hain")
+                }
+                continue
             }
 
             if (acted) {
@@ -664,9 +790,15 @@ class Runner(private val ctx: Context) {
             } else {
                 idle++
                 if (idle >= 4) {
-                    Logger.log("✅ Kuch aur nahi mila, run complete (claims: $claimsDone)")
-                    Logger.log("Last screen text: $lastTexts")
-                    return
+                    if (!lobbyNow && lobbyWaits < 6) {
+                        lobbyWaits++
+                        idle = 3
+                        Logger.log("⏳ Lobby abhi nahi dikha, thoda aur wait ($lobbyWaits/6)")
+                    } else {
+                        Logger.log("✅ Kuch aur nahi mila, run complete (claims: $claimsDone)")
+                        Logger.log("Last screen text: $lastTexts")
+                        return
+                    }
                 }
                 if (!sleepStop(2500)) return
             }

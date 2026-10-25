@@ -1,6 +1,19 @@
-# Chaman AutoClaim v0.5.1
+# Chaman AutoClaim v0.5.3
 
 Carrom Pool daily rewards auto-claim (Accessibility + OCR). by Chaman Bhai Production.
+
+## v0.5.3
+- Game open wait: max 12 sec. 5 sec baad har 1 sec check (lobby / koi page / popup dikhe toh turant aage)
+- Cleanup phase + global back finder: popups, Play Games, daily page, chest, unknown pages -> bottom-left back, corner X, OK/close buttons, last me system Back (max 3, sirf non-lobby)
+- Lobby 3 baar capture (1 sec gap), tabhi Free Rewards / claim tab. 60 sec me confirm na ho toh bhi aage badhta hai
+- Anjaan page ka text log me ("Anjaan page: ...") + last scan screenshot
+
+## v0.5.2
+- BUG FIX: ad chalte chalte "claim ho gaya" aake run band ho jata tha. Ad ke andar "Home" 2 baar aane se lobby samajh liya jata tha.
+  Ab: lobby = neeche ke 15% me kam se kam 3 alag nav words (Home/Friends/Equipment/Events/Shop),
+  ad ke text (install/download/google play...) dikhe toh game screen nahi, aur 2 baar lagatar dikhna zaroori.
+- Run tabhi complete jab lobby dikhe (warna 6 extra wait)
+- Bina Collect ke ad screen mile toh bhi close karne ki koshish
 
 ## v0.5.1
 - Ad close: white X (yellow/colored square ke andar) bhi detect hota hai
