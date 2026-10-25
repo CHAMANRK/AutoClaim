@@ -195,10 +195,19 @@ class MainActivity : Activity() {
         hint.setPadding(0, dp(6), 0, 0)
         permCard.addView(hint)
 
+        // ---- rewards (har reward ka alag toggle)
+        val rwCard = card("REWARDS: KYA COLLECT KARNA HAI", page)
+        rwCard.addView(toggle("Free Rewards (4 ad wale, Free Coins popup)", "r_free", true) { runner.tFree = it })
+        rwCard.addView(toggle("Lobby ka Ready / Open chest", "r_chest", true) { runner.tChest = it })
+        rwCard.addView(toggle("Gifts (Friends Inbox: Accept All)", "r_gifts", true) { runner.tGifts = it })
+        rwCard.addView(toggle("Login Calendar (Daily Reward)", "r_calendar", true) { runner.tCalendar = it })
+        rwCard.addView(toggle("Lucky Box", "r_lucky", true) { runner.tLucky = it })
+        rwCard.addView(toggle("   Lucky Box: gems se 1 baar continue (max 30)", "r_luckygems", true) { runner.tLuckyGems = it })
+        rwCard.addView(toggle("Baaki Events (red alert / Ready / Open, free ya ad wale)", "r_events", true) { runner.tEvents = it })
+        rwCard.addView(toggle("End me game band karke AutoClaim kholo", "r_close", true) { runner.tCloseGame = it })
+
         // ---- settings
         val setCard = card("SETTINGS", page)
-        setCard.addView(toggle("Rewards claim + ad logic", "claim", true) { runner.tapCollect = it })
-        setCard.addView(toggle("Daily Reward ka Collect bhi claim karo", "daily", false) { runner.claimDaily = it })
         setCard.addView(toggle("Extra screens: chest, OK / Claim / Yes / No", "extras", true) { runner.handleExtras = it })
         setCard.addView(toggle("Playable ad: \"Google Play >>\" dabao (X na mile toh)", "cta", true) { runner.tapPlayCta = it })
         setCard.addView(toggle("Floating status line", "overlay", true) {

@@ -167,4 +167,51 @@ class ClaimService : AccessibilityService() {
         }
         return null
     }
+
+    fun swipe(x1: Float, y1: Float, x2: Float, y2: Float, durMs: Long = 400): Boolean {
+        val path = Path()
+        path.moveTo(x1, y1)
+        path.lineTo(x2, y2)
+        val g = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, durMs))
+            .build()
+        val latch = CountDownLatch(1)
+        var ok = false
+        val cb = object : GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) {
+                ok = true
+                latch.countDown()
+            }
+
+            override fun onCancelled(gestureDescription: GestureDescription?) {
+                latch.countDown()
+            }
+        }
+        if (!dispatchGesture(g, cb, null)) return false
+        latch.await(4, TimeUnit.SECONDS)
+        return ok
+    }
+
+    /** Settings jaisi screens ke buttons ke liye: text/contentDescription me label ho toh click. */
+    fun clickByLabels(labels: List<String>, contains: Boolean): String? {
+        val root = rootInActiveWindow ?: return null
+        val q = ArrayDeque<AccessibilityNodeInfo>()
+        q.add(root)
+        var seen = 0
+        while (q.isNotEmpty() && seen < 1200) {
+            val n = q.removeFirst()
+            seen++
+            val t = (n.text ?: n.contentDescription)?.toString()?.trim()?.lowercase()
+            if (t != null && n.isEnabled && labels.any { if (contains) t.contains(it) else t == it }) {
+                var c: AccessibilityNodeInfo? = n
+                while (c != null && !c.isClickable) c = c.parent
+                if (c != null && c.isEnabled && c.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return t
+            }
+            for (i in 0 until n.childCount) {
+                val ch = n.getChild(i)
+                if (ch != null) q.add(ch)
+            }
+        }
+        return null
+    }
 }

@@ -1,6 +1,21 @@
-# Chaman AutoClaim v0.5.2
+# Chaman AutoClaim v0.6.0
 
 Carrom Pool daily rewards auto-claim (Accessibility + OCR). by Chaman Bhai Production.
+
+## v0.6.0
+- Har reward ka alag toggle (REWARDS card): Free Rewards, Lobby chest, Gifts, Login Calendar, Lucky Box (+ gems continue), baaki Events, End me game band
+- Order: cleanup (lobby 3x) -> Free Rewards -> Lobby chest -> Gifts -> Events -> finish
+- Gifts: lobby ke gift box pe number ho tabhi, Friends Inbox me Accept All, Request Gifts popup X se band
+- Events: red "!" / Ready wale cards kholta hai, kuch na dikhe toh 4 baar scroll; sirf free ya ad wale collect, paid skip
+- Lucky Box: 4 boxes me se random (4th bottom-right nahi); bomb pe pehle ad, ad na chale toh gems (max 30, 1 baar);
+  gems ke baad usi level pe dusra box, agle level pe seedha Leave With Rewards -> Leave -> OK...; Golden (paid) page pe sirf back
+- End me: game Force stop (App Info page) + AutoClaim app khulta hai
+
+## v0.5.3
+- Game open wait: max 12 sec. 5 sec baad har 1 sec check (lobby / koi page / popup dikhe toh turant aage)
+- Cleanup phase + global back finder: popups, Play Games, daily page, chest, unknown pages -> bottom-left back, corner X, OK/close buttons, last me system Back (max 3, sirf non-lobby)
+- Lobby 3 baar capture (1 sec gap), tabhi Free Rewards / claim tab. 60 sec me confirm na ho toh bhi aage badhta hai
+- Anjaan page ka text log me ("Anjaan page: ...") + last scan screenshot
 
 ## v0.5.2
 - BUG FIX: ad chalte chalte "claim ho gaya" aake run band ho jata tha. Ad ke andar "Home" 2 baar aane se lobby samajh liya jata tha.

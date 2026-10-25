@@ -268,4 +268,90 @@ object Detector {
         }
         return best
     }
+
+    /** Lucky Box: band (tall) yellow ribbon dikhe toh gift box abhi band (closed) hai. */
+    fun ribbonFraction(bmp: Bitmap, cx: Int, cy: Int, halfH: Int): Float {
+        val halfW = maxOf(4, (bmp.width * 0.012f).toInt())
+        val x0 = maxOf(0, cx - halfW)
+        val x1 = minOf(bmp.width - 1, cx + halfW)
+        val y0 = maxOf(0, cy - halfH)
+        val y1 = minOf(bmp.height - 1, cy + halfH)
+        var total = 0
+        var yellow = 0
+        var y = y0
+        while (y <= y1) {
+            var x = x0
+            while (x <= x1) {
+                val p = bmp.getPixel(x, y)
+                val r = Color.red(p)
+                val g = Color.green(p)
+                val b = Color.blue(p)
+                total++
+                if (r > 190 && g > 140 && b < 120 && (r - b) > 90) yellow++
+                x += 2
+            }
+            y += 3
+        }
+        return if (total == 0) 0f else yellow.toFloat() / total
+    }
+
+    /** Events list me card ke top-right ke chhote laal "!" alert badges (screen ke daayen kinare). */
+    fun findAlertBadges(bmp: Bitmap): List<Rect> {
+        val s = 4
+        val w = bmp.width / s
+        val h = bmp.height / s
+        if (w < 20 || h < 20) return emptyList()
+        val small = Bitmap.createScaledBitmap(bmp, w, h, true)
+        val px = IntArray(w * h)
+        small.getPixels(px, 0, w, 0, 0, w, h)
+        small.recycle()
+        val mask = BooleanArray(w * h) { i ->
+            val p = px[i]
+            val r = Color.red(p)
+            val g = Color.green(p)
+            val b = Color.blue(p)
+            r > 185 && g < 90 && b < 90 && (r - g) > 100
+        }
+        val seen = BooleanArray(w * h)
+        val stack = IntArray(w * h)
+        val out = ArrayList<Rect>()
+        for (start in 0 until w * h) {
+            if (!mask[start] || seen[start]) continue
+            var sp = 0
+            stack[sp++] = start
+            seen[start] = true
+            var minX = w
+            var maxX = 0
+            var minY = h
+            var maxY = 0
+            var cnt = 0
+            while (sp > 0) {
+                val i = stack[--sp]
+                val x = i % w
+                val y = i / w
+                cnt++
+                if (x < minX) minX = x
+                if (x > maxX) maxX = x
+                if (y < minY) minY = y
+                if (y > maxY) maxY = y
+                if (x > 0 && mask[i - 1] && !seen[i - 1]) { seen[i - 1] = true; stack[sp++] = i - 1 }
+                if (x < w - 1 && mask[i + 1] && !seen[i + 1]) { seen[i + 1] = true; stack[sp++] = i + 1 }
+                if (y > 0 && mask[i - w] && !seen[i - w]) { seen[i - w] = true; stack[sp++] = i - w }
+                if (y < h - 1 && mask[i + w] && !seen[i + w]) { seen[i + w] = true; stack[sp++] = i + w }
+            }
+            val bw = maxX - minX + 1
+            val bh = maxY - minY + 1
+            val aspect = bw.toFloat() / bh
+            val fill = cnt.toFloat() / (bw * bh)
+            val cxp = (minX + maxX) / 2
+            val cyp = (minY + maxY) / 2
+            if (bw >= w * 0.03f && bw <= w * 0.075f && aspect >= 0.8f && aspect <= 1.25f &&
+                fill >= 0.35f && fill <= 0.95f && cxp > w * 0.8f && cyp > h * 0.10f && cyp < h * 0.92f
+            ) {
+                out.add(Rect(minX * s, minY * s, (maxX + 1) * s, (maxY + 1) * s))
+            }
+        }
+        out.sortBy { it.top }
+        return out
+    }
 }
