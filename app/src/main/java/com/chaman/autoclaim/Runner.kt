@@ -194,7 +194,9 @@ class Runner(private val ctx: Context) {
             hits.add(Hit(if (a) "COLLECT ACTIVE" else "collect locked", l.rect))
             if (a) active.add(l.rect) else locked++
         }
-        val x = Detector.findRedBadges(shot).maxByOrNull { it.width() }
+        val x = Detector.findRedBadges(shot)
+            .filter { it.centerX() > w * 0.70 && it.centerY() < h * 0.50 }
+            .maxByOrNull { it.width() }
         if (x != null) hits.add(Hit("X", x))
         val closer = lines.firstOrNull { closerWords.contains(norm(it.text)) }?.rect
         if (closer != null) hits.add(Hit("closer", closer))
@@ -211,6 +213,7 @@ class Runner(private val ctx: Context) {
         // NOTE: Events list ke Login Calendar card me bhi "Claim a new reward every day!" likha hota hai
         val dailyPage = !eventsList && (
             low.any { it.contains("claim a new reward") } ||
+                low.any { it.contains("daily fortune") } ||
                 (low.any { it.contains("daily reward") } &&
                     lines.any { norm(it.text) == "rewards" && it.rect.top < h * 0.12 })
             )
@@ -230,7 +233,11 @@ class Runner(private val ctx: Context) {
 
         // Friends / Gifts
         val friendsScreen = lines.any { norm(it.text) == "friends" && it.rect.centerY() < h * 0.12 && it.rect.centerX() < w * 0.35 }
-        val acceptAll = lines.firstOrNull { norm(it.text) == "accept all" }?.rect
+        val acceptAll = lines.firstOrNull {
+            val n = norm(it.text)
+            (n == "accept all" || (n.startsWith("accept a") && !n.contains("and") && !n.contains("return"))) &&
+                it.rect.centerY() > h * 0.75
+        }?.rect
         val noGifts = low.any { it.contains("no gifts to collect") }
         val requestGifts = low.any { it.contains("request gifts") } && low.any { it.contains("select all") }
 
@@ -418,6 +425,7 @@ class Runner(private val ctx: Context) {
      */
     private fun pickDialogButton(an: Analysis): Pair<OcrLine, String>? {
         if (an.playGames || an.bomb || an.luckyBoard || an.luckyIntro || an.areYouSure || an.golden || an.eventsList) return null
+        if (an.friendsScreen || an.acceptAll != null) return null
         val full = an.lines.joinToString(" ") { it.text.lowercase() }
         val cost = costWords.any { full.contains(it) }
 
@@ -933,6 +941,9 @@ class Runner(private val ctx: Context) {
         var lobbyWaits = 0
         var unexpectedAds = 0
         var goldenTaps = 0
+        var collectTaps = 0
+        val collectTried = HashMap<Int, Int>()
+        val getTried = HashSet<String>()
         var lobbyConfirm = 0
         var unknownCount = 0
         var globalTaps = 0
@@ -1052,6 +1063,23 @@ class Runner(private val ctx: Context) {
                     }
                     Logger.log("Ad result: $res")
                     acted = true
+                } else if (an.friendsScreen && an.acceptAll != null && giftAccepts < 4) {
+                    giftAccepts++
+                    svc.tap(an.acceptAll.exactCenterX(), an.acceptAll.exactCenterY())
+                    Logger.log("🎁 Friends: Accept All dabaya ($giftAccepts)")
+                    acted = true
+                } else if (handleExtras && !an.rewardsOpen && !an.dailyPage && !an.friendsScreen && !an.golden &&
+                    an.active.isNotEmpty() && collectTaps < 12 &&
+                    !costWords.any { c -> lines.joinToString(" ") { it.text.lowercase() }.contains(c) } &&
+                    (collectTried[an.active.minByOrNull { it.top }!!.top / 25] ?: 0) < 2
+                ) {
+                    val r = an.active.minByOrNull { it.top }!!
+                    collectTaps++
+                    val k = r.top / 25
+                    collectTried[k] = (collectTried[k] ?: 0) + 1
+                    svc.tap(r.exactCenterX(), r.exactCenterY())
+                    Logger.log("👆 Popup/page ka Collect dabaya ($collectTaps)")
+                    acted = true
                 } else if (handleExtras && an.chestTap && chestRuns < 12) {
                     chestRuns++
                     chestLoop(svc, an.w, an.h)
@@ -1147,7 +1175,29 @@ class Runner(private val ctx: Context) {
                         dailyLogged = true
                         Logger.log("📅 Daily Reward page mila — active Collect: ${an.active.size}")
                     }
-                    if (tCalendar && !ev.calendarDone && an.active.isNotEmpty() && calendarTries < 2) {
+                    val gets = lines.filter {
+                        val n = norm(it.text)
+                        n.startsWith("get") && n.length <= 6 && Detector.greenFraction(sn.shot, it.rect) >= 0.2f
+                    }.sortedWith(compareBy({ it.rect.top / 40 }, { it.rect.left }))
+                    val nextGet = gets.firstOrNull { !getTried.contains("${it.rect.centerX() / 60}_${it.rect.centerY() / 60}") }
+                    if (tCalendar && nextGet != null && getTried.size < 16) {
+                        getTried.add("${nextGet.rect.centerX() / 60}_${nextGet.rect.centerY() / 60}")
+                        val isAd = nextGet.rect.centerX() > an.w * 0.5
+                        Logger.log("👆 Daily 'Get' dabaya (${getTried.size})${if (isAd) " [ad wala]" else ""}")
+                        svc.tap(nextGet.rect.exactCenterX(), nextGet.rect.exactCenterY())
+                        if (isAd) {
+                            val res = handleAd(svc)
+                            if (res == AdResult.STOPPED) {
+                                Logger.log("Roka gaya")
+                                return
+                            }
+                            Logger.log("Daily Get ad result: $res")
+                        } else {
+                            if (!sleepStop(2000)) return
+                        }
+                        ev.calendarDone = true
+                        acted = true
+                    } else if (tCalendar && !ev.calendarDone && an.active.isNotEmpty() && calendarTries < 2) {
                         calendarTries++
                         val r = an.active.minByOrNull { it.top }!!
                         Logger.log("👆 Daily Collect dabaya")
