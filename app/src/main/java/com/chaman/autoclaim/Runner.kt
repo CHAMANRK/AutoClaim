@@ -50,7 +50,8 @@ class Runner(private val ctx: Context) {
     )
     private val navWords = setOf("home", "friends", "equipment", "events", "shop")
     // ad screens ke text me aate hain (game ke lobby/popup me nahi)
-    private val adIndicators = listOf("install", "download", "get it on", "google play", "learn more", "sponsored", "app store")
+    private val adIndicators = listOf("install", "download", "get it on", "google play", "learn more", "sponsored", "app store",
+        "click now", "mintegral", "visit site", "shop now", "play for free")
 
     // generic dialog buttons
     private val costWords = listOf(
@@ -182,7 +183,10 @@ class Runner(private val ctx: Context) {
         val h = shot.height
         val hits = ArrayList<Hit>()
         val low = lines.map { it.text.lowercase() }
-        val rewardsOpen = low.any { it.contains("free coins") }
+        val adLike = low.any { t -> adIndicators.any { t.contains(it) } }
+        // v0.6.1: ad ke phone-mockup me chhota "Free Coins" likha hota hai. Popup ka title bada hota hai.
+        val fcLines = lines.filter { it.text.lowercase().contains("free coins") }
+        val rewardsOpen = fcLines.isNotEmpty() && !adLike && fcLines.any { it.rect.height() >= h * 0.012 }
         val active = ArrayList<Rect>()
         var locked = 0
         for (l in lines.filter { isCollectLabel(it.text) }) {
@@ -221,7 +225,6 @@ class Runner(private val ctx: Context) {
             if (navWords.contains(n) && l.rect.centerY() > h * 0.85) navSeen.add(n)
         }
         val navCount = navSeen.size
-        val adLike = low.any { t -> adIndicators.any { t.contains(it) } }
         val lobbyText = low.any { it.contains("lucky shot") || it.contains("leaderboards") } ||
             (!rewardsOpen && low.any { it.contains("free rewards") })
 
@@ -929,6 +932,7 @@ class Runner(private val ctx: Context) {
         var chestRuns = 0
         var lobbyWaits = 0
         var unexpectedAds = 0
+        var goldenTaps = 0
         var lobbyConfirm = 0
         var unknownCount = 0
         var globalTaps = 0
@@ -1007,6 +1011,7 @@ class Runner(private val ctx: Context) {
                 val lobbyNow = !an.adLike && (an.navCount >= 3 || an.lobbyText || an.collectNow != null)
                 if (!an.dailyPage) dailyTaps = 0
                 if (!an.playGames) pgTaps = 0
+                if (!an.golden) goldenTaps = 0
                 if (phase == P_CLEAN && an.rewardsOpen && tFree) {
                     phase = P_FREE
                     phaseStart = System.currentTimeMillis()
@@ -1037,7 +1042,7 @@ class Runner(private val ctx: Context) {
                     acted = true
                 } else if (an.playGames) {
                     Logger.log("⚠️ Play Games popup 5 try me nahi gaya, chhod rahe hain (Continue nahi dabaunga)")
-                } else if (an.adLike && !isGameScreen(an) && unexpectedAds < 3) {
+                } else if ((an.adLike || isAdClass(svc.lastWindowClass)) && !isGameScreen(an) && !an.golden && unexpectedAds < 8) {
                     unexpectedAds++
                     Logger.log("📺 Ad screen mili (bina Collect ke), close karte hain")
                     val res = handleAd(svc)
@@ -1056,8 +1061,22 @@ class Runner(private val ctx: Context) {
                     Logger.log("⬅️ 'You Got' screen: back dabaya (paid 'Open one more chest' ko nahi chhua)")
                     acted = true
                 } else if (an.golden) {
-                    tapBack(svc, an)
-                    Logger.log("⬅️ Golden Lucky Box (paid) page: sirf back")
+                    goldenTaps++
+                    val gx = an.closeX
+                    if (gx != null && goldenTaps <= 4) {
+                        svc.tap(gx.exactCenterX(), gx.exactCenterY())
+                        Logger.log("❎ Golden Lucky Box (paid) popup: laal X dabaya ($goldenTaps)")
+                    } else if (an.backBtn != null && goldenTaps <= 4) {
+                        tapBack(svc, an)
+                        Logger.log("⬅️ Golden Lucky Box (paid) page: back arrow dabaya ($goldenTaps)")
+                    } else if (goldenTaps % 2 == 1) {
+                        // X nahi mila: Bazaar popup ka X fixed position (top-right) pe
+                        svc.tap(an.w * 0.958f, an.h * 0.2155f)
+                        Logger.log("❎ Golden Lucky Box (paid) popup: fixed X position ($goldenTaps)")
+                    } else {
+                        svc.back()
+                        Logger.log("⬅️ Golden Lucky Box (paid) popup: system Back ($goldenTaps)")
+                    }
                     acted = true
                 } else if (phase == P_EVENTS && an.bomb) {
                     if (lk.start == 0L) lk.start = System.currentTimeMillis()
