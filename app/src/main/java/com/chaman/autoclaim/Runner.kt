@@ -78,9 +78,6 @@ class Runner(private val ctx: Context) {
         val navCount: Int,
         val backBtn: Rect?,
         val adLike: Boolean,
-        val backAny: Rect?,
-        val cornerX: Rect?,
-        val lobbyText: Boolean,
         val w: Int,
         val h: Int
     )
@@ -100,9 +97,9 @@ class Runner(private val ctx: Context) {
         return adClassHints.any { s.contains(it) }
     }
 
-    private fun isGameScreen(an: Analysis) = an.rewardsOpen || an.dailyPage || an.resultScreen || an.lobbyText || an.navCount >= 3
+    private fun isGameScreen(an: Analysis) = an.rewardsOpen || an.dailyPage || an.resultScreen || an.navCount >= 3
 
-    fun analyze(shot: Bitmap, lines: List<OcrLine>, deep: Boolean = false): Analysis {
+    fun analyze(shot: Bitmap, lines: List<OcrLine>): Analysis {
         val hits = ArrayList<Hit>()
         val low = lines.map { it.text.lowercase() }
         val rewardsOpen = low.any { it.contains("free coins") }
@@ -137,18 +134,11 @@ class Runner(private val ctx: Context) {
         }
         val navCount = navSeen.size
         val adLike = low.any { t -> adIndicators.any { t.contains(it) } }
-        val lobbyText = low.any { it.contains("lucky shot") || it.contains("leaderboards") } ||
-            (!rewardsOpen && low.any { it.contains("free rewards") })
-        // deep = global back finder (sirf cleanup phase me, jab lobby nahi dikh raha)
-        val backAny = if (deep && navCount < 3) Detector.findBackButton(shot) else backBtn
-        val cornerX = if (deep && navCount < 3) Detector.findCornerX(shot).minByOrNull { it.centerY() } else null
-        if (deep && backAny != null && backBtn == null) hits.add(Hit("back*", backAny))
-        if (cornerX != null) hits.add(Hit("corner-X", cornerX))
         val backBtn = if (youGot || dailyPage) Detector.findBackButton(shot) else null
         if (backBtn != null) hits.add(Hit("back", backBtn))
         return Analysis(
             lines, hits, rewardsOpen, active, locked, x, closer, cn, playGames, cancel, dailyPage,
-            chestTap, youGot, resultScreen, navCount, backBtn, adLike, backAny, cornerX, lobbyText, shot.width, shot.height
+            chestTap, youGot, resultScreen, navCount, backBtn, adLike, shot.width, shot.height
         )
     }
 
@@ -220,10 +210,10 @@ class Runner(private val ctx: Context) {
         val lines = Detector.ocr(shot)
         Logger.log("OCR lines: ${lines.size}")
         lines.take(40).forEach { Logger.log("  '${it.text}' @ ${it.rect.flattenToString()}") }
-        val an = analyze(shot, lines, deep = true)
+        val an = analyze(shot, lines)
         Logger.log(
             "FreeCoins: ${an.rewardsOpen} | Daily: ${an.dailyPage} | PlayGames: ${an.playGames} | " +
-                "Chest: ${an.chestTap} | YouGot: ${an.youGot} | Result: ${an.resultScreen} | Nav: ${an.navCount} | AdLike: ${an.adLike} | LobbyText: ${an.lobbyText} | BackFinder: ${an.backAny != null} | CornerX: ${an.cornerX != null} | " +
+                "Chest: ${an.chestTap} | YouGot: ${an.youGot} | Result: ${an.resultScreen} | Nav: ${an.navCount} | AdLike: ${an.adLike} | " +
                 "ActiveCollect: ${an.active.size} | Locked: ${an.lockedCount}"
         )
         val gb = pickDialogButton(an)
@@ -486,34 +476,6 @@ class Runner(private val ctx: Context) {
         }
     }
 
-    /** Game khulne ka intezaar: max 12 sec. 5 sec baad har 1 sec check (lobby / koi page / popup). */
-    private fun waitForGameOpen(svc: ClaimService): Boolean {
-        val t0 = System.currentTimeMillis()
-        Logger.log("Game khul raha hai (max 12 sec, 5 sec baad har sec check)")
-        if (!sleepStop(5000)) return false
-        while (System.currentTimeMillis() - t0 < 12000) {
-            if (stop) return false
-            val fp = svc.foregroundPackage()
-            val shot = svc.screenshot()
-            if (shot != null) {
-                val lines = Detector.ocr(shot)
-                val an = analyze(shot, lines)
-                shot.recycle()
-                val inGame = fp == null || fp == gamePkg || fp.startsWith("com.google.android.")
-                val signal = an.navCount >= 3 || an.lobbyText || an.rewardsOpen || an.dailyPage || an.playGames ||
-                    an.chestTap || an.youGot || an.resultScreen || an.closeX != null || an.closer != null || lines.size >= 8
-                if (inGame && signal) {
-                    val sec = (System.currentTimeMillis() - t0) / 1000
-                    Logger.log("✅ Game/page khul gaya (${sec}s)")
-                    return true
-                }
-            }
-            if (!sleepStop(1000)) return false
-        }
-        Logger.log("⏱ 12 sec ho gaye, aage badhte hain")
-        return true
-    }
-
     // ---------------------------------------------------------------- main run
 
     private fun runInner() {
@@ -526,7 +488,8 @@ class Runner(private val ctx: Context) {
             Logger.log("❌ Carrom Pool app nahi mila")
             return
         }
-        if (!waitForGameOpen(svc)) {
+        Logger.log("Game khul raha hai, 12 sec wait...")
+        if (!sleepStop(12000)) {
             Logger.log("Roka gaya")
             return
         }
@@ -544,16 +507,8 @@ class Runner(private val ctx: Context) {
         var lobbyWaits = 0
         var unexpectedAds = 0
         val genericCount = HashMap<String, Int>()
-        // phase 0 = cleanup (back finder + 3x lobby confirm), phase 1 = rewards claim
-        var phase = 0
-        var lobbyConfirm = 0
-        var unknownCount = 0
-        var globalTaps = 0
-        var sysBacks = 0
-        val phase0Start = System.currentTimeMillis()
-        Logger.log("🧹 Cleanup phase: popups/pages band karke lobby 3 baar confirm karenge")
 
-        for (i in 1..120) {
+        for (i in 1..80) {
             if (stop) {
                 Logger.log("Roka gaya")
                 return
@@ -573,16 +528,10 @@ class Runner(private val ctx: Context) {
                 continue
             }
             val lines = Detector.ocr(shot)
-            val an = analyze(shot, lines, deep = phase == 0)
+            val an = analyze(shot, lines)
             lastTexts = lines.take(12).joinToString(" | ") { it.text }
             saveAnnotated(shot, lines, an.hits)
             shot.recycle()
-
-            val lobbyNow = !an.adLike && (an.navCount >= 3 || an.lobbyText || an.collectNow != null)
-            if (phase == 0 && an.rewardsOpen) {
-                phase = 1
-                Logger.log("🎁 Free Coins popup pehle se khula hai, seedha claim tab")
-            }
 
             var acted = false
             if (!an.dailyPage) dailyTaps = 0
@@ -725,63 +674,12 @@ class Runner(private val ctx: Context) {
                         svc.tap(c.exactCenterX(), c.exactCenterY())
                         Logger.log("❎ Popup band kiya")
                         acted = true
-                    } else if (phase == 1 && !scanned && cn != null) {
+                    } else if (!scanned && cn != null) {
                         svc.tap(cn.exactCenterX(), cn.exactCenterY())
                         Logger.log("Free Rewards khola")
                         acted = true
-                    } else if (phase == 0 && !lobbyNow) {
-                        // GLOBAL BACK FINDER: koi anjaan page ho toh back/close dhundho
-                        val b = an.backAny
-                        val cxr = an.cornerX
-                        if (b != null && globalTaps < 8) {
-                            globalTaps++
-                            svc.tap(b.exactCenterX(), b.exactCenterY())
-                            Logger.log("⬅️ Back finder: back button dabaya ($globalTaps)")
-                            acted = true
-                        } else if (cxr != null && unknownCount >= 2 && globalTaps < 8) {
-                            globalTaps++
-                            svc.tap(cxr.exactCenterX(), cxr.exactCenterY())
-                            Logger.log("❎ Back finder: corner X dabaya ($globalTaps)")
-                            acted = true
-                        } else {
-                            unknownCount++
-                            if (unknownCount == 1) Logger.log("❓ Anjaan page: $lastTexts")
-                            if (unknownCount >= 3 && sysBacks < 3 && lines.size >= 5) {
-                                sysBacks++
-                                svc.back()
-                                Logger.log("⬅️ Back finder: system Back $sysBacks/3")
-                                acted = true
-                            }
-                        }
                     }
                 }
-            }
-
-            if (phase == 0) {
-                if (acted) {
-                    lobbyConfirm = 0
-                    if (!sleepStop(1500)) return
-                } else if (lobbyNow) {
-                    lobbyConfirm++
-                    unknownCount = 0
-                    Logger.log("🏠 Lobby capture $lobbyConfirm/3")
-                    if (lobbyConfirm >= 3) {
-                        phase = 1
-                        idle = 0
-                        Logger.log("✅ Lobby 3/3 confirm, ab Free Rewards / claim tab")
-                    } else if (!sleepStop(1000)) {
-                        return
-                    }
-                } else {
-                    lobbyConfirm = 0
-                    if (!sleepStop(1000)) return
-                }
-                if (phase == 0 && System.currentTimeMillis() - phase0Start > 60_000) {
-                    phase = 1
-                    idle = 0
-                    Logger.log("⏱ Cleanup 60 sec ho gaye, lobby confirm nahi hua. Phir bhi claim try karte hain")
-                }
-                continue
             }
 
             if (acted) {
@@ -790,7 +688,7 @@ class Runner(private val ctx: Context) {
             } else {
                 idle++
                 if (idle >= 4) {
-                    if (!lobbyNow && lobbyWaits < 6) {
+                    if (an.navCount < 3 && lobbyWaits < 6) {
                         lobbyWaits++
                         idle = 3
                         Logger.log("⏳ Lobby abhi nahi dikha, thoda aur wait ($lobbyWaits/6)")
